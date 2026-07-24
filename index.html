@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Time</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  #clock {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-weight: 200;
+    font-size: 18vw;
+    color: #fff;
+    letter-spacing: 0.02em;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+<div id="clock"></div>
+<script>
+  function pad(n) { return n.toString().padStart(2, '0'); }
+  function update() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+  }
+  update();
+  setInterval(update, 1000);
+</script>
+</body>
+</html>
