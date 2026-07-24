@@ -22,10 +22,24 @@
     letter-spacing: 0.02em;
     user-select: none;
   }
+  #fsBtn {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: #fff;
+    color: #000;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
 <div id="clock"></div>
+<button id="fsBtn">Fullscreen</button>
 <script>
   function pad(n) { return n.toString().padStart(2, '0'); }
   function update() {
@@ -35,6 +49,15 @@
   }
   update();
   setInterval(update, 1000);
+
+  const btn = document.getElementById('fsBtn');
+  btn.addEventListener('click', function() {
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    else if (el.msRequestFullscreen) el.msRequestFullscreen();
+    btn.style.display = 'none';
+  });
 </script>
 </body>
 </html>
