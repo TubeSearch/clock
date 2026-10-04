@@ -30,10 +30,14 @@
     font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
     user-select: none;
     -webkit-user-select: none;
+    /* Mobile: no double-tap zoom, no long-press callout, no tap flash */
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
   }
   body.idle { cursor: none; }
 
-  /* Layers: flash (0) < stage (1) < banner text (in stage) < confetti (3) < controls (6) < dark (10) */
+  /* Layers: flash/gentle (0) < stage (1) < banner text (in stage) < confetti (3) < controls (6) < dark (10) */
   #flashLayer {
     position: fixed; inset: 0;
     background: var(--alert);
@@ -43,6 +47,17 @@
   }
   body.flashing #flashLayer { animation: flash 0.7s ease-in-out infinite; }
   @keyframes flash { 0%, 100% { opacity: 0; } 50% { opacity: 0.9; } }
+
+  /* Timer alarm: a slow, soft warm glow that breathes */
+  #gentle {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center, rgba(255, 214, 150, 0.40), rgba(120, 170, 255, 0.18) 45%, rgba(0, 0, 0, 0) 75%);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+  body.ringing #gentle { animation: breathe 3.2s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { opacity: 0.12; } 50% { opacity: 1; } }
 
   #stage {
     position: relative;
@@ -67,14 +82,13 @@
 
   #clock {
     position: relative;
-    font-weight: 200;
+    font-weight: 100;
     font-size: min(18vw, 34vh);
     line-height: 1;
     letter-spacing: 0.02em;
     font-variant-numeric: tabular-nums;
     text-shadow: 0 0 0.4em hsla(var(--hue), 90%, 60%, 0.28);
     transition: color 1.5s ease, text-shadow 1.5s ease;
-    cursor: pointer;
   }
   #ampm {
     position: absolute;
@@ -102,6 +116,25 @@
     color: var(--muted);
     letter-spacing: 0.03em;
   }
+
+  /* Tap timer readout */
+  #timerBox {
+    margin-top: 0.8em;
+    min-height: 1.6em;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  #timerBox.on { opacity: 1; }
+  #timerMain {
+    font-size: clamp(26px, 6.5vw, 68px);
+    font-weight: 100;
+    color: var(--warm);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  body.ringing #timerMain { animation: softpulse 3.2s ease-in-out infinite; }
+  @keyframes softpulse { 0%, 100% { opacity: 0.65; transform: scale(1); } 50% { opacity: 1; transform: scale(1.04); } }
+
   #hourNote {
     margin-top: 0.7em;
     min-height: 1.4em;
@@ -135,22 +168,22 @@
   #fsBtn {
     position: fixed;
     bottom: calc(24px + env(safe-area-inset-bottom, 0px));
-    right: 24px;
     z-index: 6;
     background: #fff;
     color: #000;
     border: none;
     border-radius: 6px;
-    padding: 10px 16px;
+    padding: 12px 16px;
     font-family: inherit;
     font-size: 14px;
     cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    pointer-events: none;
   }
+  #fsBtn { right: 24px; }
   #fsBtn:focus-visible { outline: 2px solid hsl(var(--hue), 90%, 65%); outline-offset: 3px; }
-
-  #fsBtn { opacity: 0; transition: opacity 0.4s ease; pointer-events: none; }
-  body.active #fsBtn { opacity: 1; }
-  body.active #fsBtn { pointer-events: auto; }
+  body.active #fsBtn { opacity: 1; pointer-events: auto; }
   #fsBtn.gone { display: none; }
 
   #dark {
@@ -163,6 +196,8 @@
 
   @media (prefers-reduced-motion: reduce) {
     body.flashing #flashLayer { animation-duration: 2.6s; }
+    body.ringing #gentle { animation-duration: 6s; }
+    body.ringing #timerMain { animation: none; }
     #clock.pop { animation: none; }
   }
 </style>
@@ -170,11 +205,15 @@
 <body>
 
 <div id="flashLayer"></div>
+<div id="gentle"></div>
 
 <div id="stage">
   <div id="banner"></div>
-  <div id="clock" title="Click to switch between 12 and 24 hour"><span id="time"></span><span id="ampm"></span></div>
+  <div id="clock"><span id="time"></span><span id="ampm"></span></div>
   <div id="date"></div>
+  <div id="timerBox" aria-live="polite">
+    <div id="timerMain"></div>
+  </div>
   <div id="hourNote"></div>
 </div>
 
@@ -189,8 +228,12 @@
   'use strict';
 
   /* ---------- Settings ---------- */
-  var WAKE_HOUR = 6;        // stays black from midnight until this hour (0 to 23). Click or tap to peek.
+  var WAKE_HOUR = 6;        // stays black from midnight until this hour (0 to 23). Tap to peek.
   var PEEK_MS = 8000;       // how long a peek stays visible while it's dark
+  var SET_DELAY = 1800;     // ms of no tapping before the timer starts
+  var LONG_MS = 550;        // how long a press counts as a long press
+  var RING_MAX_MS = 120000; // alarm stops by itself after this long
+  var SOUND_FILE = 'sound.mp3';
 
   /* ---------- Helpers ---------- */
   var $ = function (id) { return document.getElementById(id); };
@@ -333,6 +376,102 @@
     clockEl.classList.add('pop');
   }
 
+  /* ---------- Tap timer ---------- */
+  // Each tap adds a minute. After a short pause the timer starts.
+  // While it runs, a tap adds a minute and a long press removes one.
+  var mode = 'idle';        // idle | setting | running | ringing
+  var count = 0, endAt = 0, setTimer = null, ringStop = null;
+  var timerBox = $('timerBox'), tMain = $('timerMain');
+
+  var audio = new Audio(SOUND_FILE);
+  audio.preload = 'auto';
+  audio.loop = true;
+  var audioReady = false;
+
+  // Phones only allow sound after a tap, so the first tap quietly unlocks it
+  function unlockAudio() {
+    if (audioReady) return;
+    try {
+      audio.muted = true;
+      var p = audio.play();
+      if (p && p.then) {
+        p.then(function () {
+          audio.pause(); audio.currentTime = 0; audio.muted = false; audioReady = true;
+        }).catch(function () { audio.muted = false; });
+      }
+    } catch (e) { audio.muted = false; }
+  }
+
+  function fmtLeft(ms) {
+    var s = Math.max(0, Math.ceil(ms / 1000));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    s = s % 60;
+    return (h ? h + ':' + pad(m) : m) + ':' + pad(s);
+  }
+
+  function renderTimer() {
+    if (mode === 'idle') { timerBox.classList.remove('on'); return; }
+    timerBox.classList.add('on');
+    if (mode === 'setting') {
+      tMain.textContent = count + (count === 1 ? ' minute' : ' minutes');
+    } else if (mode === 'running') {
+      tMain.textContent = fmtLeft(endAt - Date.now());
+    } else {
+      tMain.textContent = "Time's up";
+    }
+  }
+
+  function armSet() {
+    clearTimeout(setTimer);
+    setTimer = setTimeout(function () {
+      mode = 'running';
+      endAt = Date.now() + count * 60000;
+      renderTimer();
+    }, SET_DELAY);
+  }
+
+  function cancelTimer() {
+    clearTimeout(setTimer);
+    mode = 'idle'; count = 0;
+    renderTimer();
+  }
+
+  function addMinute() {
+    if (mode === 'idle' || mode === 'setting') { mode = 'setting'; count++; armSet(); }
+    else if (mode === 'running') { endAt += 60000; }
+    renderTimer();
+  }
+
+  function removeMinute() {
+    if (mode === 'setting') {
+      count--;
+      if (count <= 0) cancelTimer(); else armSet();
+    } else if (mode === 'running') {
+      endAt -= 60000;
+      if (endAt - Date.now() <= 0) cancelTimer();
+    }
+    renderTimer();
+  }
+
+  function ring() {
+    mode = 'ringing';
+    document.body.classList.add('ringing');
+    renderTimer();
+    try { audio.currentTime = 0; var p = audio.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+    try { if (navigator.vibrate) navigator.vibrate([200, 120, 200]); } catch (e) {}
+    clearTimeout(ringStop);
+    ringStop = setTimeout(dismiss, RING_MAX_MS);
+  }
+
+  function dismiss() {
+    clearTimeout(ringStop);
+    try { audio.pause(); audio.currentTime = 0; } catch (e) {}
+    document.body.classList.remove('ringing');
+    mode = 'idle'; count = 0;
+    renderTimer();
+    tick();
+  }
+
   /* ---------- Events ---------- */
   var firedHour = '', firedHalf = '';
   var demoFlashUntil = 0, demoDarkUntil = 0, peekUntil = 0;
@@ -350,6 +489,11 @@
     var h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
 
     if (s !== lastSecond) { lastSecond = s; render(now); }
+
+    // Tap timer
+    if (mode === 'running') {
+      if (endAt <= t) ring(); else renderTimer();
+    }
 
     var key = now.toDateString() + '-' + h;
 
@@ -392,9 +536,9 @@
     if (bannerText) { bannerEl.textContent = bannerText; bannerEl.classList.add('on'); }
     else bannerEl.classList.remove('on');
 
-    // Midnight dim: black from midnight until WAKE_HOUR
+    // Midnight dim: black from midnight until WAKE_HOUR (an alarm always lights the screen)
     var scheduledDark = h < WAKE_HOUR;
-    var wantDark = (t < demoDarkUntil) || (scheduledDark && t >= peekUntil);
+    var wantDark = (t < demoDarkUntil) || (scheduledDark && t >= peekUntil && mode !== 'ringing');
     if (wantDark !== darkState) {
       var first = darkState === null;
       setDark(wantDark, first);
@@ -425,13 +569,8 @@
     try { localStorage.setItem('clock24', use24 ? '1' : '0'); } catch (e) {}
     render(new Date());
   }
-  clockEl.addEventListener('click', function (e) {
-    if (new Date().getHours() < WAKE_HOUR) return; // while dark, a click is a peek, handled below
-    e.stopPropagation();
-    toggle24();
-  });
 
-  // While it's dark, any click or key peeks for a few seconds
+  // While it's dark, a tap or key peeks for a few seconds
   function peek() {
     if (new Date().getHours() < WAKE_HOUR) {
       peekUntil = Date.now() + PEEK_MS;
@@ -440,10 +579,48 @@
     }
     return false;
   }
-  document.addEventListener('click', function () { peek(); showControls(); });
+
+  /* Tap = +1 minute. Long press = -1 minute. Works with touch, pen and mouse. */
+  var pressing = false, longFired = false, pressTimer = null, downX = 0, downY = 0;
+
+  function cancelPress() { pressing = false; clearTimeout(pressTimer); }
+
+  document.addEventListener('pointerdown', function (e) {
+    if (e.target.closest && e.target.closest('button')) return;
+    pressing = true; longFired = false;
+    downX = e.clientX; downY = e.clientY;
+    showControls();
+    if (mode === 'ringing') return;     // the tap will dismiss it
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(function () {
+      if (!pressing) return;
+      longFired = true;
+      try { if (navigator.vibrate) navigator.vibrate(20); } catch (err) {}
+      peek();
+      removeMinute();
+    }, LONG_MS);
+  });
+
+  document.addEventListener('pointermove', function (e) {
+    if (pressing && Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 16) cancelPress();
+  }, { passive: true });
+
+  document.addEventListener('pointerup', function () {
+    if (!pressing) return;
+    cancelPress();
+    if (longFired) return;
+    unlockAudio();
+    if (mode === 'ringing') { dismiss(); return; }
+    peek();
+    addMinute();
+  });
+  document.addEventListener('pointercancel', cancelPress);
+  document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  document.addEventListener('click', unlockAudio);   // iOS counts click as the unlocking gesture
 
   document.addEventListener('keydown', function (e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (mode === 'ringing') { dismiss(); return; }
     if (peek()) return;
     var k = e.key.toLowerCase();
     if (k === 'f') toggleFullscreen();
@@ -477,7 +654,7 @@
     } catch (e) {}
   }
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible') keepAwake();
+    if (document.visibilityState === 'visible') { keepAwake(); tick(); }
   });
   keepAwake();
   document.addEventListener('click', keepAwake, { once: true });
