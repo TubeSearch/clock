@@ -248,9 +248,6 @@
   var bannerEl = $('banner'), noteEl = $('hourNote'), progressEl = $('progress');
   var darkEl = $('dark'), btn = $('fsBtn');
 
-  var use24 = false;
-  try { use24 = localStorage.getItem('clock24') === '1'; } catch (e) {}
-
   /* ---------- Confetti ---------- */
   var cv = $('confetti'), ctx = cv.getContext('2d');
   var W = 0, H = 0, parts = [], raf = null, rainUntil = 0;
@@ -348,9 +345,8 @@
 
   function render(now) {
     var h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
-    var hh = use24 ? pad(h) : String((h % 12) || 12);
-    timeEl.textContent = hh + ':' + pad(m) + ':' + pad(s);
-    ampmEl.textContent = use24 ? '' : (h < 12 ? 'AM' : 'PM');
+    timeEl.textContent = ((h % 12) || 12) + ':' + pad(m) + ':' + pad(s);
+    ampmEl.textContent = h < 12 ? 'AM' : 'PM';
     progressEl.style.width = (((m * 60 + s) / 3600) * 100).toFixed(2) + '%';
 
     if (m !== lastMinute) {
@@ -565,12 +561,6 @@
   document.addEventListener('fullscreenchange', onFsChange);
   document.addEventListener('webkitfullscreenchange', onFsChange);
 
-  function toggle24() {
-    use24 = !use24;
-    try { localStorage.setItem('clock24', use24 ? '1' : '0'); } catch (e) {}
-    render(new Date());
-  }
-
   // While it's dark, a tap or key peeks for a few seconds
   function peek() {
     if (new Date().getHours() < WAKE_HOUR) {
@@ -625,7 +615,6 @@
     if (peek()) return;
     var k = e.key.toLowerCase();
     if (k === 'f') toggleFullscreen();
-    else if (k === 'h') toggle24();
     else if (k === 'c') celebrate();
     else if (k === 't') demoFlashUntil = Date.now() + 10000;
     else if (k === 'd') demoDarkUntil = Date.now() + 5000;
