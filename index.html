@@ -232,7 +232,6 @@
   var PEEK_MS = 8000;       // how long a peek stays visible while it's dark
   var SET_DELAY = 1800;     // ms of no tapping before the timer starts
   var LONG_MS = 550;        // how long a press counts as a long press
-  var RING_MAX_MS = 120000; // alarm stops by itself after this long
   var SOUND_FILE = 'sound.mp3';
 
   /* ---------- Helpers ---------- */
@@ -380,7 +379,7 @@
   // Each tap adds a minute. After a short pause the timer starts.
   // While it runs, a tap adds a minute and a long press removes one.
   var mode = 'idle';        // idle | setting | running | ringing
-  var count = 0, endAt = 0, setTimer = null, ringStop = null;
+  var count = 0, endAt = 0, setTimer = null;
   var timerBox = $('timerBox'), tMain = $('timerMain');
 
   var audio = new Audio(SOUND_FILE);
@@ -459,12 +458,9 @@
     renderTimer();
     try { audio.currentTime = 0; var p = audio.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
     try { if (navigator.vibrate) navigator.vibrate([200, 120, 200]); } catch (e) {}
-    clearTimeout(ringStop);
-    ringStop = setTimeout(dismiss, RING_MAX_MS);
   }
 
   function dismiss() {
-    clearTimeout(ringStop);
     try { audio.pause(); audio.currentTime = 0; } catch (e) {}
     document.body.classList.remove('ringing');
     mode = 'idle'; count = 0;
